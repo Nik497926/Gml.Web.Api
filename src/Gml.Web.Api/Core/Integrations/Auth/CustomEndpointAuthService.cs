@@ -1,3 +1,5 @@
+using System.Net;
+using System.Runtime.InteropServices.JavaScript;
 using System.Text;
 using Gml.Web.Api.Domains.Integrations;
 using GmlCore.Interfaces;
@@ -31,15 +33,34 @@ public class CustomEndpointAuthService(IHttpClientFactory httpClientFactory, IGm
             IsSuccess = result.IsSuccessStatusCode
         };
 
-        if (string.IsNullOrEmpty(resultContent))
-            return authResult;
+        switch (result.StatusCode)
+        {
+            case HttpStatusCode.NotFound:
+            case HttpStatusCode.BadRequest:
+                var message = JsonConvert.DeserializeObject<AuthErrorResponse>(resultContent)?.Message;
 
-        var model = JsonConvert.DeserializeObject<AuthCustomResponse>(resultContent);
+                if (string.IsNullOrEmpty(message))
+                    return authResult;
 
-        authResult.Login = model?.Login ?? login;
-        authResult.Uuid = model?.UserUuid;
+                authResult.Message = message;
 
-        return authResult;
+                return authResult;
+            case HttpStatusCode.Unauthorized:
+                return authResult;
+            case HttpStatusCode.OK:
+                var model = JsonConvert.DeserializeObject<AuthCustomResponse>(resultContent);
 
+                authResult.Login = model?.Login ?? login;
+                authResult.Uuid = model?.UserUuid;
+
+                return authResult;
+            default:
+                throw new ArgumentOutOfRangeException();
+        }
     }
+}
+
+public class AuthErrorResponse
+{
+    public string Message { get; set; }
 }

@@ -58,7 +58,9 @@ public class UnicoreCMSAuthService(IHttpClientFactory httpClientFactory, IGmlMan
         {
             Login = data.User.Username ?? login,
             IsSuccess = result.IsSuccessStatusCode,
-            Uuid = data.User.Uuid
+            Uuid = data.User.Uuid,
+            Email = data.User.Email,
+            RealMoney = data.User.Real
         };
     }
 }

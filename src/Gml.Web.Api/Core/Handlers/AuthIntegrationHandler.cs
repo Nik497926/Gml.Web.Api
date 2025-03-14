@@ -2,6 +2,7 @@ using System.Net;
 using AutoMapper;
 using FluentValidation;
 using Gml.Core.User;
+using Gml.Web.Api.Core.Extensions;
 using Gml.Web.Api.Core.Integrations.Auth;
 using Gml.Web.Api.Domains.Integrations;
 using Gml.Web.Api.Dto.Integration;
@@ -56,9 +57,11 @@ public class AuthIntegrationHandler : IAuthIntegrationHandler
                     authDto.Password,
                     userAgent,
                     context.Request.Protocol,
-                    context.Connection.RemoteIpAddress,
+                    context.ParseRemoteAddress(),
                     authResult.Uuid,
-                    context.Request.Headers["X-HWID"]);
+                    context.Request.Headers["X-HWID"],
+                    authResult.Email,
+                    authResult.RealMoney);
 
                 if (player.IsBanned)
                 {
@@ -73,8 +76,10 @@ public class AuthIntegrationHandler : IAuthIntegrationHandler
                     .Replace("{userName}", player.Name)
                     .Replace("{userUuid}", player.Uuid);
 
+                var playerDto = mapper.Map<PlayerReadDto>(player);
+
                 return Results.Ok(ResponseMessage.Create(
-                    mapper.Map<PlayerReadDto>(player),
+                    playerDto,
                     string.Empty,
                     HttpStatusCode.OK));
             }

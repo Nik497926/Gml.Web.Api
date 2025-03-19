@@ -1,7 +1,7 @@
 using System;
 
 namespace Gml.Web.Api.Dto.Player;
-
+ 
 public class PlayerReadDto : PlayerTextureDto
 {
     public string Uuid { get; set; }

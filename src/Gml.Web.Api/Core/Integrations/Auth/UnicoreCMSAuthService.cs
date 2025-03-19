@@ -3,7 +3,7 @@ using Gml.Web.Api.Domains.Integrations;
 using GmlCore.Interfaces;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-
+ 
 namespace Gml.Web.Api.Core.Integrations.Auth;
 
 public class UnicoreCMSAuthService(IHttpClientFactory httpClientFactory, IGmlManager gmlManager)

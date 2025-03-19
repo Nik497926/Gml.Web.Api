@@ -3,7 +3,7 @@ using Gml.Core.User;
 using Gml.Web.Api.Dto.Player;
 
 namespace Gml.Web.Api.Core.MappingProfiles;
-
+ 
 public class PlayerMapper : Profile
 {
     public PlayerMapper()

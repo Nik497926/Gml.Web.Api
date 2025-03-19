@@ -1,6 +1,6 @@
 #nullable enable
 namespace Gml.Web.Api.Domains.Integrations;
-
+ 
 public class AuthResult
 {
     public bool IsSuccess { get; set; }

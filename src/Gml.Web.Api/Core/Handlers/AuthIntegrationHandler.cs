@@ -12,7 +12,7 @@ using Gml.Web.Api.Dto.User;
 using GmlCore.Interfaces;
 using GmlCore.Interfaces.Enums;
 using Microsoft.AspNetCore.Authorization;
-
+ 
 namespace Gml.Web.Api.Core.Handlers;
 
 public class AuthIntegrationHandler : IAuthIntegrationHandler

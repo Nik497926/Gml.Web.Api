@@ -30,7 +30,8 @@ public abstract class SettingsHandler : ISettingsHandler
         var previous = await settingsService.GetSettings();
         var settings = settingsDto.ToDomain(previous);
 
-        unicoreAuthOptions.SetUseExternalTokens(settingsDto.UnicoreUseExternalTokens);
+        if (settingsDto.UnicoreUseExternalTokens.HasValue)
+            unicoreAuthOptions.SetUseExternalTokens(settingsDto.UnicoreUseExternalTokens.Value);
 
         var result = await settingsService.UpdateSettings(settings);
 
@@ -50,6 +51,18 @@ public abstract class SettingsHandler : ISettingsHandler
         return Results.Ok(ResponseMessage.Create(
             ToPlatformDto(mapper.Map<SettingsReadDto>(settings), unicoreAuthOptions),
             "Настройки получены",
+            HttpStatusCode.OK));
+    }
+
+    public static IResult UpdateUnicoreTokens(
+        UnicoreAuthOptionsService unicoreAuthOptions,
+        [FromBody] UnicoreTokensUpdateRequest request)
+    {
+        unicoreAuthOptions.SetUseExternalTokens(request.UseExternalTokens);
+
+        return Results.Ok(ResponseMessage.Create(
+            new { useExternalTokens = unicoreAuthOptions.UseExternalTokens },
+            "Настройка токенов Unicore обновлена",
             HttpStatusCode.OK));
     }
 

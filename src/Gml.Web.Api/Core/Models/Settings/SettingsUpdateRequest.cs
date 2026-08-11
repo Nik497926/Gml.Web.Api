@@ -24,8 +24,9 @@ public class SettingsUpdateRequest
 
     /// <summary>
     /// true — AccessToken игрока из Unicore; false — JWT Gml.
+    /// null — не менять текущее значение (флаг правится из формы Unicore).
     /// </summary>
-    public bool UnicoreUseExternalTokens { get; set; } = true;
+    public bool? UnicoreUseExternalTokens { get; set; }
 
     public DomainSettings ToDomain(DomainSettings? previous)
     {

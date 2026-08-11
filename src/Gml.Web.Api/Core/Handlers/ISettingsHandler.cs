@@ -18,6 +18,10 @@ public interface ISettingsHandler
         IMapper mapper,
         UnicoreAuthOptionsService unicoreAuthOptions);
 
+    static abstract IResult UpdateUnicoreTokens(
+        UnicoreAuthOptionsService unicoreAuthOptions,
+        UnicoreTokensUpdateRequest request);
+
     static abstract Task<IResult> TestS3Connection(
         ISettingsRepository settingsService,
         S3ConnectionTestService s3ConnectionTestService,

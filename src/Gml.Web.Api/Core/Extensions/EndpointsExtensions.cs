@@ -1290,6 +1290,18 @@ public static class EndpointsExtensions
             .Produces<ResponseMessage>((int)HttpStatusCode.NotFound)
             .RequireAuthorization(c => c.RequireRole("Admin"));
 
+        app.MapPut("/api/v1/settings/unicore-tokens", SettingsHandler.UpdateUnicoreTokens)
+            .WithOpenApi(generatedOperation =>
+            {
+                generatedOperation.Summary = "Переключение источника токенов Unicore";
+                return generatedOperation;
+            })
+            .WithDescription("Включить/выключить использование AccessToken из Unicore для игроков")
+            .WithName("Update Unicore tokens mode")
+            .WithTags("Settings")
+            .Produces<ResponseMessage>()
+            .RequireAuthorization(c => c.RequireRole("Admin"));
+
         app.MapPost("/api/v1/settings/platform/s3/test", SettingsHandler.TestS3Connection)
             .WithOpenApi(generatedOperation =>
             {
@@ -1306,6 +1318,18 @@ public static class EndpointsExtensions
         #endregion
 
         #region Plugins
+
+        app.MapGet("/api/v1/marketplace/bridge", MarketplaceHandler.GetBridge)
+            .WithOpenApi(generatedOperation =>
+            {
+                generatedOperation.Summary = "Проверка доступности Gml Backend для сайта маркетплейса";
+                return generatedOperation;
+            })
+            .WithDescription("Публичный ping для сайта маркетплейса перед выдачей API-ключа проекта")
+            .WithName("Marketplace bridge")
+            .WithTags("Marketplace")
+            .AllowAnonymous()
+            .Produces<ResponseMessage>();
 
         app.MapPost("/api/v1/plugins/install", PluginHandler.InstallPlugin)
             .WithOpenApi(generatedOperation =>

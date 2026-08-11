@@ -14,11 +14,13 @@ public interface IJavaRuntimeService
     Task<ProfileJavaMeta> AssignAzulAsync(string profileName, JavaAzulAssignRequest request, CancellationToken ct = default);
     Task<ProfileJavaMeta> AssignUploadAsync(string profileName, Stream archiveStream, string fileName, CancellationToken ct = default);
     Task ApplyToProfileAsync(IGameProfile profile, ProfileJavaMeta meta);
+    string? ResolveJavaPath(ProfileJavaMeta meta, string? osName, string? osArch);
 }
 
 public class JavaRuntimeService(
     IGmlManager gmlManager,
-    IHttpClientFactory httpClientFactory) : IJavaRuntimeService
+    IHttpClientFactory httpClientFactory,
+    IAzulJavaService azulJavaService) : IJavaRuntimeService
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -52,42 +54,82 @@ public class JavaRuntimeService(
         JavaAzulAssignRequest request,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(request.DownloadUrl) && string.IsNullOrWhiteSpace(request.PackageUuid))
-            throw new ArgumentException("Укажите downloadUrl или packageUuid");
+        if (request.MajorVersion <= 0)
+            throw new ArgumentException("Укажите majorVersion Java (Azul Zulu)");
 
-        var downloadUrl = request.DownloadUrl;
-        if (string.IsNullOrWhiteSpace(downloadUrl))
-            throw new ArgumentException("downloadUrl обязателен для загрузки Azul JDK");
+        var major = request.MajorVersion;
+        var packages = await azulJavaService.ListLatestForAllTargetsAsync(major, ct);
 
-        var runtimeId = Guid.NewGuid().ToString("N");
-        var runtimeDir = GetRuntimeDirectory(runtimeId);
-        Directory.CreateDirectory(runtimeDir);
+        if (packages.Count == 0)
+            throw new InvalidOperationException($"Azul Zulu {major}: не найдены пакеты ни для одной ОС");
 
-        var archivePath = Path.Combine(runtimeDir, "jdk.zip");
+        var batchId = Guid.NewGuid().ToString("N");
+        var runtimes = new Dictionary<string, ProfileJavaRuntimeEntry>(StringComparer.OrdinalIgnoreCase);
+        string? displayVersion = request.Version;
+        string? displayName = request.Name ?? $"Azul Zulu {major}";
+
         var client = httpClientFactory.CreateClient();
-        await using (var remote = await client.GetStreamAsync(downloadUrl, ct))
-        await using (var file = File.Create(archivePath))
+
+        foreach (var package in packages)
         {
-            await remote.CopyToAsync(file, ct);
+            if (string.IsNullOrWhiteSpace(package.DownloadUrl) || package.Os is null || package.Arch is null)
+                continue;
+
+            ct.ThrowIfCancellationRequested();
+
+            var key = AzulJavaService.RuntimeKey(package.Os, package.Arch);
+            var runtimeId = $"{batchId}-{key}";
+            var runtimeDir = GetRuntimeDirectory(runtimeId);
+            Directory.CreateDirectory(runtimeDir);
+
+            var archivePath = Path.Combine(runtimeDir, "jdk.zip");
+            await using (var remote = await client.GetStreamAsync(package.DownloadUrl, ct))
+            await using (var file = File.Create(archivePath))
+            {
+                await remote.CopyToAsync(file, ct);
+            }
+
+            var extractDir = Path.Combine(runtimeDir, "jdk");
+            Directory.CreateDirectory(extractDir);
+            await ExtractArchiveAsync(archivePath, extractDir, ct);
+            TryDelete(archivePath);
+
+            var javaHome = FindJavaHome(extractDir);
+            if (javaHome is null)
+                continue;
+
+            displayVersion ??= package.Version;
+            runtimes[key] = new ProfileJavaRuntimeEntry
+            {
+                RuntimeId = runtimeId,
+                JavaPath = ToRelativeRuntimePath(javaHome),
+                DownloadUrl = package.DownloadUrl,
+                PackageUuid = package.PackageUuid,
+                Os = package.Os,
+                Arch = package.Arch,
+                Name = package.Name,
+                Version = package.Version
+            };
         }
 
-        var extractDir = Path.Combine(runtimeDir, "jdk");
-        Directory.CreateDirectory(extractDir);
-        await ExtractArchiveAsync(archivePath, extractDir, ct);
-        TryDelete(archivePath);
+        if (runtimes.Count == 0)
+            throw new InvalidOperationException("Не удалось распаковать Azul JDK ни для одной ОС");
 
-        var javaHome = FindJavaHome(extractDir)
-                       ?? throw new InvalidOperationException("В архиве Azul не найден исполняемый файл java");
+        var hostKey = AzulJavaService.RuntimeKey(AzulJavaService.DetectOs(), AzulJavaService.DetectArch());
+        var primary = runtimes.TryGetValue(hostKey, out var hostRuntime)
+            ? hostRuntime
+            : runtimes.Values.First();
 
         var meta = new ProfileJavaMeta
         {
             Source = JavaRuntimeSource.Azul,
-            JavaMajor = request.MajorVersion,
-            RuntimeId = runtimeId,
-            JavaPath = ToRelativeRuntimePath(javaHome),
-            Name = request.Name ?? Path.GetFileNameWithoutExtension(downloadUrl),
-            Version = request.Version,
-            PackageUuid = request.PackageUuid
+            JavaMajor = major,
+            RuntimeId = batchId,
+            JavaPath = primary.JavaPath,
+            Name = displayName,
+            Version = displayVersion,
+            PackageUuid = primary.PackageUuid,
+            Runtimes = runtimes
         };
 
         var profile = await RequireProfileAsync(profileName);
@@ -108,7 +150,6 @@ public class JavaRuntimeService(
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
         if (ext is not (".zip" or ".gz" or ".tgz"))
         {
-            // allow .tar.gz
             if (!fileName.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException("Поддерживаются только .zip и .tar.gz");
         }
@@ -131,13 +172,27 @@ public class JavaRuntimeService(
         var javaHome = FindJavaHome(extractDir)
                        ?? throw new InvalidOperationException("В архиве не найден исполняемый файл java");
 
+        var key = AzulJavaService.RuntimeKey(AzulJavaService.DetectOs(), AzulJavaService.DetectArch());
+        var relative = ToRelativeRuntimePath(javaHome);
         var meta = new ProfileJavaMeta
         {
             Source = JavaRuntimeSource.Upload,
             RuntimeId = runtimeId,
-            JavaPath = ToRelativeRuntimePath(javaHome),
+            JavaPath = relative,
             Name = Path.GetFileNameWithoutExtension(fileName.Replace(".tar.gz", "", StringComparison.OrdinalIgnoreCase)),
-            Version = "custom"
+            Version = "custom",
+            Runtimes =
+            {
+                [key] = new ProfileJavaRuntimeEntry
+                {
+                    RuntimeId = runtimeId,
+                    JavaPath = relative,
+                    Os = AzulJavaService.DetectOs(),
+                    Arch = AzulJavaService.DetectArch(),
+                    Name = Path.GetFileNameWithoutExtension(fileName),
+                    Version = "custom"
+                }
+            }
         };
 
         var profile = await RequireProfileAsync(profileName);
@@ -148,11 +203,41 @@ public class JavaRuntimeService(
 
     public Task ApplyToProfileAsync(IGameProfile profile, ProfileJavaMeta meta)
     {
-        // Gml.Core IGameProfile in current package has no JavaPath setter.
-        // Runtime selection is persisted in runtimes/profiles/{name}.json sidecar.
         _ = profile;
         _ = meta;
         return Task.CompletedTask;
+    }
+
+    public string? ResolveJavaPath(ProfileJavaMeta meta, string? osName, string? osArch)
+    {
+        if (meta.Source == JavaRuntimeSource.Default)
+            return null;
+
+        if (meta.Runtimes.Count > 0)
+        {
+            var key = AzulJavaService.ResolveRuntimeKey(osName, osArch);
+            if (key is not null && meta.Runtimes.TryGetValue(key, out var entry)
+                && !string.IsNullOrWhiteSpace(entry.JavaPath))
+                return entry.JavaPath;
+
+            // Fallbacks: try alternate key forms from raw osName
+            foreach (var candidate in EnumerateKeyFallbacks(osName, osArch))
+            {
+                if (meta.Runtimes.TryGetValue(candidate, out var e) && !string.IsNullOrWhiteSpace(e.JavaPath))
+                    return e.JavaPath;
+            }
+        }
+
+        return meta.JavaPath;
+    }
+
+    private static IEnumerable<string> EnumerateKeyFallbacks(string? osName, string? osArch)
+    {
+        var os = AzulJavaService.NormalizeOs(osName);
+        var arch = AzulJavaService.NormalizeArch(osArch);
+        if (os is null || arch is null)
+            yield break;
+        yield return AzulJavaService.RuntimeKey(os, arch);
     }
 
     private async Task<IGameProfile> RequireProfileAsync(string profileName)
@@ -201,9 +286,8 @@ public class JavaRuntimeService(
 
     private static string? FindJavaHome(string extractRoot)
     {
-        var javaNames = OperatingSystem.IsWindows()
-            ? new[] { "java.exe" }
-            : new[] { "java" };
+        // Cross-OS archives: look for both Windows and Unix binaries regardless of host.
+        string[] javaNames = ["java.exe", "java"];
 
         foreach (var javaName in javaNames)
         {
@@ -246,7 +330,6 @@ public class JavaRuntimeService(
 
         if (archivePath.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
         {
-            // treat as tar.gz fallback
             await using var file = File.OpenRead(archivePath);
             await using var gzip = new GZipStream(file, CompressionMode.Decompress);
             await TarFile.ExtractToDirectoryAsync(gzip, destination, overwriteFiles: true, cancellationToken: ct);

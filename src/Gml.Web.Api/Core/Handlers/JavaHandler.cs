@@ -42,24 +42,47 @@ public static class JavaHandler
                 }
             };
 
+            // One UI row per major: selecting Azul Zulu binds JDK for all OS × arch.
             foreach (var major in majors)
             {
                 try
                 {
-                    var packages = await azul.ListPackagesAsync(major, os, arch);
-                    foreach (var package in packages.Take(3))
+                    var packages = string.IsNullOrWhiteSpace(os) || string.IsNullOrWhiteSpace(arch)
+                        ? await azul.ListLatestForAllTargetsAsync(major)
+                        : await azul.ListPackagesAsync(major, os, arch);
+
+                    if (packages.Count == 0)
+                        continue;
+
+                    var sample = packages.First();
+                    var platforms = packages
+                        .Select(p => $"{p.Os}/{p.Arch}")
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(s => s)
+                        .ToArray();
+
+                    result.Add(new JavaVersionDto
                     {
-                        package.Recommended = package.MajorVersion == recommendedMajor;
-                        result.Add(package);
-                    }
+                        Name = $"Azul Zulu {major}",
+                        Version = sample.Version,
+                        MajorVersion = major,
+                        Source = JavaRuntimeSource.Azul,
+                        // No single-OS downloadUrl — AssignAzul downloads the full matrix by major.
+                        DownloadUrl = null,
+                        PackageUuid = null,
+                        Os = null,
+                        Arch = null,
+                        Recommended = major == recommendedMajor
+                    });
+
+                    _ = platforms; // reserved for future UI detail
                 }
                 catch
                 {
-                    // Azul may be unreachable for some majors/os — skip
+                    // Azul may be unreachable for some majors — skip
                 }
             }
 
-            // Recommended Azul first after default
             var ordered = result
                 .OrderBy(v => v.Source == JavaRuntimeSource.Default ? 0 : 1)
                 .ThenByDescending(v => v.Recommended)

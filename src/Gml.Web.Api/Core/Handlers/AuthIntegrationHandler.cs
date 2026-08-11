@@ -81,32 +81,44 @@ public class AuthIntegrationHandler : IAuthIntegrationHandler
         AuthResult authResult,
         IAccessTokenService accessTokenService,
         ExternalPlayerTokenStore tokenStore,
+        UnicoreAuthOptionsService unicoreAuthOptions,
         IGmlManager gmlManager)
     {
-        // Prefer tokens from the external site (UnicoreCMS etc.) when present.
-        if (authResult is ExtendedAuthResult { AccessToken: { Length: > 0 } externalAccess } extended)
+        var hasExternal = authResult is ExtendedAuthResult { AccessToken: { Length: > 0 } };
+        var useExternalTokens = unicoreAuthOptions.UseExternalTokens;
+
+        if (hasExternal && useExternalTokens)
         {
-            player.AccessToken = externalAccess;
-            var expiry = UnicoreCMSAuthService.TryGetJwtExpiry(externalAccess);
+            var extended = (ExtendedAuthResult)authResult;
+            player.AccessToken = extended.AccessToken!;
+            var expiry = UnicoreCMSAuthService.TryGetJwtExpiry(extended.AccessToken!);
             if (expiry.HasValue)
                 player.ExpiredDate = expiry.Value;
 
             if (!string.IsNullOrWhiteSpace(player.Uuid))
-                tokenStore.SetRefreshToken(player.Uuid, extended.RefreshToken);
+                tokenStore.SetTokens(player.Uuid, extended.AccessToken, extended.RefreshToken);
 
             await gmlManager.Users.UpdateUser(player);
             return;
         }
 
-        // Fallback: Gml-issued JWT (10 days).
+        // Gml JWT на игроке. Unicore access/refresh всё равно сохраняем для кабинета/playtime.
+        if (hasExternal && !string.IsNullOrWhiteSpace(player.Uuid))
+        {
+            var extended = (ExtendedAuthResult)authResult;
+            tokenStore.SetTokens(player.Uuid, extended.AccessToken, extended.RefreshToken);
+        }
+        else if (!string.IsNullOrWhiteSpace(player.Uuid) && !hasExternal)
+        {
+            tokenStore.SetTokens(player.Uuid, null, null);
+        }
+
         player.AccessToken = accessTokenService.GenerateAccessToken(
             player.Uuid,
             player.Name,
             player.Name,
             ["Player"], ["profiles.view", "integrations.news.view"], 60 * 24 * 10);
-
-        if (!string.IsNullOrWhiteSpace(player.Uuid))
-            tokenStore.SetRefreshToken(player.Uuid, null);
+        player.ExpiredDate = DateTime.UtcNow.AddDays(10);
 
         await gmlManager.Users.UpdateUser(player);
     }
@@ -116,6 +128,7 @@ public class AuthIntegrationHandler : IAuthIntegrationHandler
         IGmlManager gmlManager,
         IAccessTokenService accessTokenService,
         ExternalPlayerTokenStore tokenStore,
+        UnicoreAuthOptionsService unicoreAuthOptions,
         IMapper mapper,
         IValidator<BaseUserPassword> validator,
         IAuthService authService,
@@ -169,7 +182,7 @@ public class AuthIntegrationHandler : IAuthIntegrationHandler
                 hwid,
                 authResult.IsSlim);
 
-            await ApplyPlayerAccessToken(player, authResult, accessTokenService, tokenStore, gmlManager);
+            await ApplyPlayerAccessToken(player, authResult, accessTokenService, tokenStore, unicoreAuthOptions, gmlManager);
 
             return await HandleAuthenticatedUser(context, gmlManager, mapper, player, userAgent);
         }
@@ -199,6 +212,7 @@ public class AuthIntegrationHandler : IAuthIntegrationHandler
         IMapper mapper,
         IAccessTokenService accessTokenService,
         ExternalPlayerTokenStore tokenStore,
+        UnicoreAuthOptionsService unicoreAuthOptions,
         UnicoreCMSAuthService unicoreAuthService,
         BaseUserPassword authDto)
     {
@@ -239,12 +253,26 @@ public class AuthIntegrationHandler : IAuthIntegrationHandler
                     var refreshed = await unicoreAuthService.RefreshAsync(refresh);
                     if (refreshed is { IsSuccess: true, AccessToken: { Length: > 0 } newAccess })
                     {
-                        user.AccessToken = newAccess;
-                        var expiry = UnicoreCMSAuthService.TryGetJwtExpiry(newAccess);
-                        if (expiry.HasValue)
-                            user.ExpiredDate = expiry.Value;
+                        tokenStore.SetTokens(user.Uuid, newAccess, refreshed.RefreshToken);
 
-                        tokenStore.SetRefreshToken(user.Uuid, refreshed.RefreshToken);
+                        if (unicoreAuthOptions.UseExternalTokens)
+                        {
+                            user.AccessToken = newAccess;
+                            var expiry = UnicoreCMSAuthService.TryGetJwtExpiry(newAccess);
+                            if (expiry.HasValue)
+                                user.ExpiredDate = expiry.Value;
+                        }
+                        else
+                        {
+                            // Игрок продолжает с Gml JWT; Unicore токены только в store.
+                            user.AccessToken = accessTokenService.GenerateAccessToken(
+                                user.Uuid,
+                                user.Name,
+                                user.Name,
+                                ["Player"], ["profiles.view", "integrations.news.view"], 60 * 24 * 10);
+                            user.ExpiredDate = DateTime.UtcNow.AddDays(10);
+                        }
+
                         await gmlManager.Users.UpdateUser(user);
 
                         return await HandleAuthenticatedUser(context, gmlManager, mapper, user, userAgent);

@@ -13,7 +13,8 @@ public class UnicorePlayerCabinetService(
     IGmlManager gmlManager,
     ExternalPlayerTokenStore tokenStore,
     UnicoreCMSAuthService unicoreAuthService,
-    IAccessTokenService accessTokenService)
+    IAccessTokenService accessTokenService,
+    UnicoreAuthOptionsService unicoreAuthOptions)
 {
     private readonly HttpClient _httpClient = httpClientFactory.CreateClient();
 
@@ -79,7 +80,17 @@ public class UnicorePlayerCabinetService(
         string? storedAccess,
         DateTime expiredDate)
     {
-        // Unicore JWT: not signed by Gml key, still within ExpiredDate.
+        // 1) Unicore access из store (режим «наш JWT» держит Unicore токены отдельно)
+        var storedExternal = tokenStore.GetAccessToken(uuid);
+        if (!string.IsNullOrWhiteSpace(storedExternal)
+            && !accessTokenService.ValidateToken(storedExternal))
+        {
+            var expiry = UnicoreCMSAuthService.TryGetJwtExpiry(storedExternal);
+            if (!expiry.HasValue || expiry.Value > DateTime.UtcNow)
+                return storedExternal;
+        }
+
+        // 2) Unicore JWT на самом игроке (режим useExternalTokens)
         if (!string.IsNullOrWhiteSpace(storedAccess)
             && expiredDate > DateTime.UtcNow
             && !accessTokenService.ValidateToken(storedAccess))
@@ -87,6 +98,7 @@ public class UnicorePlayerCabinetService(
             return storedAccess;
         }
 
+        // 3) Refresh Unicore
         var refresh = tokenStore.GetRefreshToken(uuid);
         if (string.IsNullOrWhiteSpace(refresh))
             return null;
@@ -95,16 +107,20 @@ public class UnicorePlayerCabinetService(
         if (refreshed is not { IsSuccess: true, AccessToken: { Length: > 0 } newAccess })
             return null;
 
-        tokenStore.SetRefreshToken(uuid, refreshed.RefreshToken);
+        tokenStore.SetTokens(uuid, newAccess, refreshed.RefreshToken);
 
-        var user = await gmlManager.Users.GetUserByUuid(uuid);
-        if (user is not null)
+        // Обновляем AccessToken игрока только если включён режим Unicore-токенов
+        if (unicoreAuthOptions.UseExternalTokens)
         {
-            user.AccessToken = newAccess;
-            var expiry = UnicoreCMSAuthService.TryGetJwtExpiry(newAccess);
-            if (expiry.HasValue)
-                user.ExpiredDate = expiry.Value;
-            await gmlManager.Users.UpdateUser(user);
+            var user = await gmlManager.Users.GetUserByUuid(uuid);
+            if (user is not null)
+            {
+                user.AccessToken = newAccess;
+                var expiry = UnicoreCMSAuthService.TryGetJwtExpiry(newAccess);
+                if (expiry.HasValue)
+                    user.ExpiredDate = expiry.Value;
+                await gmlManager.Users.UpdateUser(user);
+            }
         }
 
         return newAccess;

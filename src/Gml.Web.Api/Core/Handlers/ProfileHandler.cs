@@ -11,6 +11,7 @@ using Gml.Dto.Mods;
 using Gml.Dto.Player;
 using Gml.Dto.Profile;
 using Gml.Models.User;
+using Gml.Web.Api.Core.Models.Java;
 using Gml.Web.Api.Core.Services;
 using Gml.Web.Api.Domains.System;
 using GmlCore.Interfaces;
@@ -366,6 +367,14 @@ public class ProfileHandler : IProfileHandler
 
         var profileDto = mapper.Map<ProfileReadInfoDto>(profileInfo);
 
+        await ApplyJavaRuntimeOverlayAsync(
+            profileDto,
+            profile.Name,
+            osName,
+            createInfoDto.OsArchitecture,
+            createInfoDto.OsType,
+            context);
+
         var hostValue = context.Request.Headers["X-Forwarded-Host"].FirstOrDefault() ?? context.Request.Host.Value;
         profileDto.Background = $"{context.Request.Scheme}://{hostValue}/api/v1/file/{profile.BackgroundImageKey}";
 
@@ -471,6 +480,14 @@ public class ProfileHandler : IProfileHandler
         }
 
         var profileDto = mapper.Map<ProfileReadInfoDto>(profileInfo);
+
+        await ApplyJavaRuntimeOverlayAsync(
+            profileDto,
+            profile.Name,
+            osName,
+            createInfoDto.OsArchitecture,
+            createInfoDto.OsType,
+            context);
 
         var hostValue = context.Request.Headers["X-Forwarded-Host"].FirstOrDefault() ?? context.Request.Host.Value;
         profileDto.Background = profile.BackgroundImageKey is not null
@@ -776,5 +793,34 @@ public class ProfileHandler : IProfileHandler
 
         return Results.Ok(ResponseMessage.Create("Пользователь успешно удален из белого списка профиля",
             HttpStatusCode.OK));
+    }
+
+    private static async Task ApplyJavaRuntimeOverlayAsync(
+        ProfileReadInfoDto profileDto,
+        string profileName,
+        string osName,
+        string? osArchitecture,
+        string? osTypeRaw,
+        HttpContext context)
+    {
+        try
+        {
+            var runtime = context.RequestServices.GetService<IJavaRuntimeService>();
+            if (runtime is null)
+                return;
+
+            var meta = await runtime.GetMetaAsync(profileName);
+            if (meta.Source == JavaRuntimeSource.Default)
+                return;
+
+            var javaPath = runtime.ResolveJavaPath(meta, osName, osArchitecture)
+                           ?? runtime.ResolveJavaPath(meta, osTypeRaw, osArchitecture);
+            if (!string.IsNullOrWhiteSpace(javaPath))
+                profileDto.JavaPath = javaPath;
+        }
+        catch
+        {
+            // Non-fatal: keep Gml.Core bootstrap JavaPath
+        }
     }
 }

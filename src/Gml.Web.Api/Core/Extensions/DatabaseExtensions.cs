@@ -3,6 +3,7 @@ using Gml.Core.Launcher;
 using Gml.Domains.Auth;
 using Gml.Domains.Settings;
 using Gml.Web.Api.Core.Options;
+using Gml.Web.Api.Core.Services;
 using Gml.Web.Api.Data;
 using GmlCore.Interfaces;
 using GmlCore.Interfaces.Enums;
@@ -72,6 +73,19 @@ public static class DatabaseExtensions
             dataBaseSettings.SentryAutoClearPeriod,
             dataBaseSettings.SentryNeedAutoClear
         );
+
+        if (dataBaseSettings.StorageType == StorageType.S3)
+        {
+            try
+            {
+                var repair = services.GetRequiredService<S3MinioClientRepairService>();
+                repair.ApplyAsync(gmlManager).GetAwaiter().GetResult();
+            }
+            catch
+            {
+                // не блокируем старт — ошибки S3 будут видны при загрузке/тесте
+            }
+        }
 
         // Seed base RBAC: Admin role and base permissions with descriptions
         try

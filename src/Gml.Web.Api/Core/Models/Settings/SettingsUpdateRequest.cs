@@ -22,6 +22,11 @@ public class SettingsUpdateRequest
     public bool SentryNeedAutoClear { get; set; }
     public string? SentryAutoClearPeriod { get; set; }
 
+    /// <summary>
+    /// true — AccessToken игрока из Unicore; false — JWT Gml.
+    /// </summary>
+    public bool UnicoreUseExternalTokens { get; set; } = true;
+
     public DomainSettings ToDomain(DomainSettings? previous)
     {
         TimeSpan period;
@@ -42,10 +47,14 @@ public class SettingsUpdateRequest
             ? (TextureProtocolEnum)TextureProtocol
             : previous?.TextureProtocol ?? TextureProtocolEnum.Https;
 
+        var storageType = Enum.IsDefined(typeof(StorageTypeEnum), StorageType)
+            ? (StorageTypeEnum)StorageType
+            : previous?.StorageType ?? StorageTypeEnum.LocalStorage;
+
         return new DomainSettings
         {
             RegistrationIsEnabled = RegistrationIsEnabled,
-            StorageType = (StorageTypeEnum)StorageType,
+            StorageType = storageType,
             StorageHost = StorageHost ?? previous?.StorageHost ?? string.Empty,
             StorageLogin = StorageLogin ?? previous?.StorageLogin ?? string.Empty,
             StoragePassword = password ?? string.Empty,

@@ -1290,6 +1290,19 @@ public static class EndpointsExtensions
             .Produces<ResponseMessage>((int)HttpStatusCode.NotFound)
             .RequireAuthorization(c => c.RequireRole("Admin"));
 
+        app.MapPost("/api/v1/settings/platform/s3/test", SettingsHandler.TestS3Connection)
+            .WithOpenApi(generatedOperation =>
+            {
+                generatedOperation.Summary = "Проверка соединения с S3";
+                return generatedOperation;
+            })
+            .WithDescription("Проверка соединения с объектным хранилищем S3")
+            .WithName("Test S3 connection")
+            .WithTags("Settings")
+            .Produces<ResponseMessage>()
+            .Produces<ResponseMessage>((int)HttpStatusCode.BadRequest)
+            .RequireAuthorization(c => c.RequireRole("Admin"));
+
         #endregion
 
         #region Plugins

@@ -24,27 +24,88 @@ public abstract class SettingsHandler : ISettingsHandler
     public static async Task<IResult> UpdateSettings(
         ISettingsRepository settingsService,
         IMapper mapper,
+        UnicoreAuthOptionsService unicoreAuthOptions,
         [FromBody] SettingsUpdateRequest settingsDto)
     {
         var previous = await settingsService.GetSettings();
         var settings = settingsDto.ToDomain(previous);
 
+        unicoreAuthOptions.SetUseExternalTokens(settingsDto.UnicoreUseExternalTokens);
+
         var result = await settingsService.UpdateSettings(settings);
 
         return Results.Ok(ResponseMessage.Create(
-            mapper.Map<SettingsReadDto>(result),
+            ToPlatformDto(mapper.Map<SettingsReadDto>(result), unicoreAuthOptions),
             string.Empty,
             HttpStatusCode.OK));
     }
 
-    public static async Task<IResult> GetSettings(ISettingsRepository settingsService, IMapper mapper)
+    public static async Task<IResult> GetSettings(
+        ISettingsRepository settingsService,
+        IMapper mapper,
+        UnicoreAuthOptionsService unicoreAuthOptions)
     {
         var settings = await settingsService.GetSettings();
 
         return Results.Ok(ResponseMessage.Create(
-            mapper.Map<SettingsReadDto>(settings),
+            ToPlatformDto(mapper.Map<SettingsReadDto>(settings), unicoreAuthOptions),
             "Настройки получены",
             HttpStatusCode.OK));
+    }
+
+    private static PlatformSettingsReadDto ToPlatformDto(
+        SettingsReadDto settings,
+        UnicoreAuthOptionsService unicoreAuthOptions)
+    {
+        return new PlatformSettingsReadDto
+        {
+            RegistrationIsEnabled = settings.RegistrationIsEnabled,
+            StorageType = settings.StorageType,
+            StorageHost = settings.StorageHost,
+            CurseForgeKey = settings.CurseForgeKey,
+            VkKey = settings.VkKey,
+            StorageLogin = settings.StorageLogin,
+            TextureProtocol = settings.TextureProtocol,
+            SentryNeedAutoClear = settings.SentryNeedAutoClear,
+            SentryAutoClearPeriod = settings.SentryAutoClearPeriod,
+            UnicoreUseExternalTokens = unicoreAuthOptions.UseExternalTokens
+        };
+    }
+
+    public static async Task<IResult> TestS3Connection(
+        ISettingsRepository settingsService,
+        S3ConnectionTestService s3ConnectionTestService,
+        [FromBody] SettingsS3TestRequest request)
+    {
+        var previous = await settingsService.GetSettings();
+
+        var host = string.IsNullOrWhiteSpace(request.StorageHost)
+            ? previous?.StorageHost
+            : request.StorageHost;
+        var login = string.IsNullOrWhiteSpace(request.StorageLogin)
+            ? previous?.StorageLogin
+            : request.StorageLogin;
+        var password = string.IsNullOrWhiteSpace(request.StoragePassword)
+            ? previous?.StoragePassword
+            : request.StoragePassword;
+
+        try
+        {
+            await s3ConnectionTestService.TestAsync(
+                host ?? string.Empty,
+                login ?? string.Empty,
+                password ?? string.Empty);
+
+            return Results.Ok(ResponseMessage.Create(
+                "Соединение с S3 успешно установлено",
+                HttpStatusCode.OK));
+        }
+        catch (Exception ex)
+        {
+            return Results.BadRequest(ResponseMessage.Create(
+                ex.Message,
+                HttpStatusCode.BadRequest));
+        }
     }
 
     public static async Task<IResult> Install(

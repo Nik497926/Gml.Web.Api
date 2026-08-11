@@ -93,7 +93,7 @@ public class ProfileHub : BaseHub
                 var runtime = Context.GetHttpContext()?.RequestServices.GetRequiredService<IJavaRuntimeService>();
                 if (runtime is not null
                     && string.Equals(javaVersion.Source, JavaRuntimeSource.Azul, StringComparison.OrdinalIgnoreCase)
-                    && !string.IsNullOrWhiteSpace(javaVersion.DownloadUrl))
+                    && javaVersion.MajorVersion > 0)
                 {
                     await runtime.AssignAzulAsync(profileName, new JavaAzulAssignRequest
                     {

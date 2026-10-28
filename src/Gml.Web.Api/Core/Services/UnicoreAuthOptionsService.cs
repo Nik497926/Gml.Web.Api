@@ -6,6 +6,7 @@ namespace Gml.Web.Api.Core.Services;
 /// Локальные опции Unicore (не в Gml.Domains.Settings).
 /// useExternalTokens=true — AccessToken игрока = JWT Unicore;
 /// false — AccessToken = JWT Gml, а Unicore access/refresh держатся в ExternalPlayerTokenStore для кабинета.
+/// ApiKey — серверный ключ UnicoreCMS (Authorization: Api-Key …) для админской проверки кабинета.
 /// </summary>
 public class UnicoreAuthOptionsService
 {
@@ -29,11 +30,42 @@ public class UnicoreAuthOptionsService
         }
     }
 
+    public string? ApiKey
+    {
+        get
+        {
+            lock (_sync) return string.IsNullOrWhiteSpace(_state.ApiKey) ? null : _state.ApiKey;
+        }
+    }
+
+    public bool HasApiKey
+    {
+        get
+        {
+            lock (_sync) return !string.IsNullOrWhiteSpace(_state.ApiKey);
+        }
+    }
+
     public void SetUseExternalTokens(bool value)
     {
         lock (_sync)
         {
             _state.UseExternalTokens = value;
+            Save();
+        }
+    }
+
+    /// <summary>
+    /// null — не менять; empty — очистить; иначе сохранить новый ключ.
+    /// </summary>
+    public void SetApiKey(string? apiKey)
+    {
+        if (apiKey is null)
+            return;
+
+        lock (_sync)
+        {
+            _state.ApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey.Trim();
             Save();
         }
     }
@@ -52,7 +84,7 @@ public class UnicoreAuthOptionsService
         }
         catch
         {
-            // default: true (текущее поведение)
+            // default
         }
     }
 
@@ -65,5 +97,6 @@ public class UnicoreAuthOptionsService
     private sealed class UnicoreAuthOptionsState
     {
         public bool UseExternalTokens { get; set; } = true;
+        public string? ApiKey { get; set; }
     }
 }

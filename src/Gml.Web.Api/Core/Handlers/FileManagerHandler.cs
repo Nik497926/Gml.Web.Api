@@ -132,7 +132,58 @@ public static class FileManagerHandler
         {
             var root = await fileManager.ResolveRootAsync(scope, profileName);
             var (stream, fileName) = await fileManager.OpenDownloadAsync(root, path);
-            return Results.File(stream, "application/octet-stream", fileName);
+            return Results.File(stream, "application/octet-stream", fileName, enableRangeProcessing: true);
+        }
+        catch (Exception ex)
+        {
+            return MapException(ex);
+        }
+    }
+
+    public static async Task<IResult> Upload(
+        HttpContext httpContext,
+        IFileManagerService fileManager,
+        [FromQuery] string scope,
+        [FromQuery] string? path,
+        [FromQuery] string? profileName,
+        [FromQuery] bool overwrite = true)
+    {
+        var authError = EnsureScopeAccess(httpContext.User, scope);
+        if (authError is not null)
+            return authError;
+
+        if (!httpContext.Request.HasFormContentType)
+            return Results.BadRequest(ResponseMessage.Create("Ожидается multipart/form-data", HttpStatusCode.BadRequest));
+
+        try
+        {
+            var form = await httpContext.Request.ReadFormAsync();
+            var files = form.Files;
+            if (files.Count == 0)
+                return Results.BadRequest(ResponseMessage.Create("Не переданы файлы", HttpStatusCode.BadRequest));
+
+            var root = await fileManager.ResolveRootAsync(scope, profileName);
+            var uploaded = new List<object>(files.Count);
+
+            foreach (var file in files)
+            {
+                if (file.Length <= 0)
+                    continue;
+
+                await using var stream = file.OpenReadStream();
+                var relativePath = await fileManager.UploadAsync(
+                    root,
+                    path,
+                    file.FileName,
+                    stream,
+                    overwrite);
+                uploaded.Add(new { relativePath, name = Path.GetFileName(relativePath), size = file.Length });
+            }
+
+            if (uploaded.Count == 0)
+                return Results.BadRequest(ResponseMessage.Create("Пустые файлы не загружены", HttpStatusCode.BadRequest));
+
+            return Results.Ok(ResponseMessage.Create(uploaded, "Файлы загружены", HttpStatusCode.OK));
         }
         catch (Exception ex)
         {

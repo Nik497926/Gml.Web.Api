@@ -13,6 +13,7 @@ public interface IFileManagerService
     Task WriteAsync(string root, string relativePath, string content);
     Task DeleteAsync(string root, IEnumerable<string> relativePaths);
     Task<(Stream Stream, string FileName)> OpenDownloadAsync(string root, string relativePath);
+    Task<string> UploadAsync(string root, string? destinationRelativePath, string fileName, Stream content, bool overwrite);
     Task<string> ArchiveAsync(string root, IEnumerable<string> relativePaths, string archiveName);
     Task ExtractAsync(string root, string archiveRelativePath, string? destinationRelativePath);
 }

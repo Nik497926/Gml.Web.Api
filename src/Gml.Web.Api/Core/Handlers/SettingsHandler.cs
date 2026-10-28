@@ -59,9 +59,14 @@ public abstract class SettingsHandler : ISettingsHandler
         [FromBody] UnicoreTokensUpdateRequest request)
     {
         unicoreAuthOptions.SetUseExternalTokens(request.UseExternalTokens);
+        unicoreAuthOptions.SetApiKey(request.ApiKey);
 
         return Results.Ok(ResponseMessage.Create(
-            new { useExternalTokens = unicoreAuthOptions.UseExternalTokens },
+            new
+            {
+                useExternalTokens = unicoreAuthOptions.UseExternalTokens,
+                hasApiKey = unicoreAuthOptions.HasApiKey
+            },
             "Настройка токенов Unicore обновлена",
             HttpStatusCode.OK));
     }
@@ -81,7 +86,8 @@ public abstract class SettingsHandler : ISettingsHandler
             TextureProtocol = settings.TextureProtocol,
             SentryNeedAutoClear = settings.SentryNeedAutoClear,
             SentryAutoClearPeriod = settings.SentryAutoClearPeriod,
-            UnicoreUseExternalTokens = unicoreAuthOptions.UseExternalTokens
+            UnicoreUseExternalTokens = unicoreAuthOptions.UseExternalTokens,
+            UnicoreHasApiKey = unicoreAuthOptions.HasApiKey
         };
     }
 

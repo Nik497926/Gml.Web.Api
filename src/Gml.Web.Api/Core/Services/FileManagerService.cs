@@ -219,6 +219,48 @@ public class FileManagerService(IGmlManager gmlManager) : IFileManagerService
         return Task.FromResult((stream, Path.GetFileName(fullPath)));
     }
 
+    public async Task<string> UploadAsync(
+        string root,
+        string? destinationRelativePath,
+        string fileName,
+        Stream content,
+        bool overwrite)
+    {
+        var safeName = Path.GetFileName(fileName);
+        if (string.IsNullOrWhiteSpace(safeName))
+            throw new ArgumentException("Некорректное имя файла");
+
+        if (IsProtectedName(safeName))
+            throw new UnauthorizedAccessException(ProtectedFileMessage);
+
+        var relative = string.IsNullOrWhiteSpace(destinationRelativePath)
+            ? safeName
+            : Path.Combine(destinationRelativePath.Replace('/', Path.DirectorySeparatorChar), safeName)
+                .Replace('\\', '/');
+
+        var fullPath = ResolveSafePath(root, relative);
+        if (Directory.Exists(fullPath))
+            throw new InvalidOperationException("Нельзя записать файл поверх каталога");
+
+        if (File.Exists(fullPath) && !overwrite)
+            throw new InvalidOperationException($"Файл уже существует: {relative}");
+
+        var directory = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            Directory.CreateDirectory(directory);
+
+        await using var fileStream = new FileStream(
+            fullPath,
+            overwrite ? FileMode.Create : FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            bufferSize: 1024 * 64,
+            useAsync: true);
+        await content.CopyToAsync(fileStream);
+
+        return ToRelativePath(root, fullPath);
+    }
+
     public Task<string> ArchiveAsync(string root, IEnumerable<string> relativePaths, string archiveName)
     {
         var paths = relativePaths

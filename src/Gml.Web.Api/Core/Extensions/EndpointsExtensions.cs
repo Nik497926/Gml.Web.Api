@@ -1185,6 +1185,18 @@ public static class EndpointsExtensions
             .WithTags("FileManager")
             .RequireAuthorization();
 
+        app.MapPost("/api/v1/file-manager/upload", FileManagerHandler.Upload)
+            .WithOpenApi(generatedOperation =>
+            {
+                generatedOperation.Summary = "Загрузка файлов в файловый менеджер";
+                return generatedOperation;
+            })
+            .WithDescription("Multipart upload одного или нескольких файлов в текущую папку")
+            .WithName("File manager upload")
+            .WithTags("FileManager")
+            .DisableAntiforgery()
+            .RequireAuthorization();
+
         app.MapPost("/api/v1/file-manager/archive", FileManagerHandler.Archive)
             .WithOpenApi(generatedOperation =>
             {

@@ -11,4 +11,9 @@ public class PlatformSettingsReadDto : SettingsReadDto
     /// true — токен игрока из Unicore; false — JWT Gml (кабинет через сохранённый Unicore refresh).
     /// </summary>
     public bool UnicoreUseExternalTokens { get; set; } = true;
+
+    /// <summary>
+    /// Задан ли серверный API-ключ UnicoreCMS (секрет не отдаём).
+    /// </summary>
+    public bool UnicoreHasApiKey { get; set; }
 }

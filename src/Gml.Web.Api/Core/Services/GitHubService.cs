@@ -274,4 +274,54 @@ public class GitHubService : IGitHubService
 
         await File.WriteAllTextAsync(settingsFile, content);
     }
+
+    public Task ApplyBrandTheme(string projectPath, string installationDirectory)
+    {
+        var brandRoot = Path.Combine(installationDirectory, "LauncherBrand");
+        var targetThemes = Path.Combine(projectPath, "src", "Gml.Launcher", "Themes");
+
+        if (!Directory.Exists(brandRoot))
+            return Task.CompletedTask;
+
+        Directory.CreateDirectory(targetThemes);
+
+        // LauncherBrand/active.json → Themes/active.json
+        var brandActive = Path.Combine(brandRoot, "active.json");
+        if (File.Exists(brandActive))
+            File.Copy(brandActive, Path.Combine(targetThemes, "active.json"), overwrite: true);
+
+        // LauncherBrand/Themes/* или сразу папки тем в корне LauncherBrand
+        var brandThemes = Path.Combine(brandRoot, "Themes");
+        var sourceRoot = Directory.Exists(brandThemes) ? brandThemes : brandRoot;
+
+        foreach (var dir in Directory.GetDirectories(sourceRoot))
+        {
+            var name = Path.GetFileName(dir);
+            if (string.Equals(name, "samples", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var dest = Path.Combine(targetThemes, name);
+            CopyDirectory(dir, dest);
+        }
+
+        // Отдельные файлы theme.json / logo в корне бренда не копируем как темы —
+        // только папки и active.json.
+        return Task.CompletedTask;
+    }
+
+    private static void CopyDirectory(string sourceDir, string destinationDir)
+    {
+        Directory.CreateDirectory(destinationDir);
+
+        foreach (var file in Directory.GetFiles(sourceDir))
+        {
+            var destFile = Path.Combine(destinationDir, Path.GetFileName(file));
+            File.Copy(file, destFile, overwrite: true);
+        }
+
+        foreach (var dir in Directory.GetDirectories(sourceDir))
+        {
+            CopyDirectory(dir, Path.Combine(destinationDir, Path.GetFileName(dir)));
+        }
+    }
 }

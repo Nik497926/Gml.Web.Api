@@ -55,6 +55,7 @@ public class GitHubLauncherHub(IGitHubService gitHubService, IGmlManager gmlMana
 
             ChangeProgress(nameof(GitHubLauncherHub), 98);
             await gitHubService.EditLauncherFiles(newFolder, host, folderName);
+            await gitHubService.ApplyBrandTheme(newFolder, gmlManager.LauncherInfo.InstallationDirectory);
             ChangeProgress(nameof(GitHubLauncherHub), 100);
             SendCallerMessage($"Проект \"{branchName}\" успешно создан");
         }
@@ -83,10 +84,17 @@ public class GitHubLauncherHub(IGitHubService gitHubService, IGmlManager gmlMana
                 return;
             }
 
-            Log("Start compilling...");
+            Log("Start compiling...");
             downloadLogsDisposable = gmlManager.LauncherInfo.Settings.SystemProcedures.DownloadLogs.Subscribe(Log);
             if (await gmlManager.LauncherInfo.Settings.SystemProcedures.InstallDotnet())
             {
+                // Подтягиваем брендовый шаблон перед сборкой (панель / сервер)
+                var launcherProjectPath = Path.Combine(
+                    gmlManager.LauncherInfo.InstallationDirectory, "Launcher", version);
+                await gitHubService.ApplyBrandTheme(
+                    launcherProjectPath, gmlManager.LauncherInfo.InstallationDirectory);
+                Log("Brand theme applied (LauncherBrand → Themes), if present.");
+
                 buildLogsDisposable = gmlManager.Launcher.BuildLogs.Subscribe(Log);
 
                 var result = await gmlManager.Launcher.Build(version, osTypes);

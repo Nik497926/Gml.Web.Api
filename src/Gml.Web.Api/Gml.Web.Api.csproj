@@ -13,28 +13,28 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AutoMapper" Version="16.1.1"/>
-    <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
-    <PackageReference Include="FluentValidation" Version="11.12.0"/>
-    <PackageReference Include="Gml.Core" Version="2026.1.0-beta1"/>
-    <PackageReference Include="Minio" Version="7.0.0"/>
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0"/>
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0"/>
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.0"/>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0">
+    <PackageReference Include="AutoMapper" Version="16.2.0" />
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
+    <PackageReference Include="FluentValidation" Version="11.12.0" />
+    <PackageReference Include="Gml.Core" Version="2026.1.0-beta1" />
+    <PackageReference Include="Minio" Version="7.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.14" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.14" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.14" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0"/>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.0">
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.14">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.4"/>
-    <PackageReference Include="Sentry" Version="5.16.2"/>
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.0.1"/>
-    <PackageReference Include="System.Reactive" Version="6.1.0"/>
-	<PackageReference Include="Otp.NET" Version="1.4.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="Sentry" Version="5.16.2" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.3.1" />
+    <PackageReference Include="System.Reactive" Version="6.1.0" />
+	<PackageReference Include="Otp.NET" Version="1.4.1" />
   </ItemGroup>
 
   <ItemGroup>
@@ -44,8 +44,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="Gml.WebApi.Tests"/>
-    <InternalsVisibleTo Include="Gml.Backend.Tests"/>
+    <InternalsVisibleTo Include="Gml.WebApi.Tests" />
+    <InternalsVisibleTo Include="Gml.Backend.Tests" />
   </ItemGroup>
 
   <ItemGroup>
@@ -148,16 +148,16 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Remove="data.db"/>
-    <None Remove="private.key"/>
-    <None Remove="public.key"/>
-    <None Remove="data.db-shm"/>
-    <None Remove="data.db-wal"/>
+    <None Remove="data.db" />
+    <None Remove="private.key" />
+    <None Remove="public.key" />
+    <None Remove="data.db-shm" />
+    <None Remove="data.db-wal" />
     <None Remove="builds\build-16-05-2024 16-44-44\linux-x64\Gml.Launcher" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\plugins\Gml.Web.Api.EndpointSDK\Gml.Web.Api.EndpointSDK.csproj"/>
+    <ProjectReference Include="..\plugins\Gml.Web.Api.EndpointSDK\Gml.Web.Api.EndpointSDK.csproj" />
   </ItemGroup>
 
 </Project>

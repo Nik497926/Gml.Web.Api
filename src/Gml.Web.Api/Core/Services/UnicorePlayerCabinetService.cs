@@ -50,22 +50,41 @@ public class UnicorePlayerCabinetService(
             };
         }
 
+        // Kernel — служебный пользователь Unicore (API-ключи / внутренности).
+        // Публичный профиль и кабинет для него всегда 404 — не считаем это ошибкой интеграции.
+        if (IsUnicoreKernelUser(player.Name))
+        {
+            return new UnicorePlayerCabinetDto
+            {
+                Available = false,
+                Message = "Kernel — системный пользователь Unicore, кабинет недоступен"
+            };
+        }
+
         var baseUri = new Uri(authService.Endpoint);
         var host = $"{baseUri.Scheme}://{baseUri.Host}";
         var cabinetUrl = $"{host}/cabinet";
 
-        // 1) Админский путь: Unicore API key (не зависит от сессии игрока)
+        // Публичный профиль: playtime + UUID Unicore (часто ≠ UUID в Gml)
+        var (publicCabinet, unicoreUuid) = await TryLoadPublicProfileAsync(host, player.Name, ct);
+        var unicoreUserUuid = !string.IsNullOrWhiteSpace(unicoreUuid) ? unicoreUuid! : player.Uuid;
+
+        string? apiKeyError = null;
+
+        // 1) Админский путь: Unicore API key (не зависит от сессии игрока и от тоггла токенов)
         var apiKey = unicoreAuthOptions.ApiKey;
         if (!string.IsNullOrWhiteSpace(apiKey))
         {
-            var fromApiKey = await TryLoadWithApiKeyAsync(host, apiKey, player.Uuid, player.Name, ct);
-            if (fromApiKey is not null)
+            var fromApiKey = await TryLoadWithApiKeyAsync(host, apiKey, unicoreUserUuid, publicCabinet, ct);
+            if (fromApiKey.Cabinet is not null)
             {
-                fromApiKey.Available = true;
-                fromApiKey.CabinetUrl = cabinetUrl;
-                fromApiKey.TotalPlaytime = fromApiKey.Servers.Sum(s => s.Playtime);
-                return fromApiKey;
+                fromApiKey.Cabinet.Available = true;
+                fromApiKey.Cabinet.CabinetUrl = cabinetUrl;
+                fromApiKey.Cabinet.TotalPlaytime = fromApiKey.Cabinet.Servers.Sum(s => s.Playtime);
+                return fromApiKey.Cabinet;
             }
+
+            apiKeyError = fromApiKey.Error;
         }
 
         // 2) Путь игрока: Bearer JWT Unicore (/me)
@@ -83,53 +102,56 @@ public class UnicorePlayerCabinetService(
         }
 
         // 3) Публичный playtime без привилегий
-        var fromPublic = await TryLoadPublicPlaytimeAsync(host, player.Name, ct);
-        fromPublic.Available = true;
-        fromPublic.CabinetUrl = cabinetUrl;
-        fromPublic.TotalPlaytime = fromPublic.Servers.Sum(s => s.Playtime);
-        fromPublic.Message = string.IsNullOrWhiteSpace(apiKey)
+        publicCabinet.Available = true;
+        publicCabinet.CabinetUrl = cabinetUrl;
+        publicCabinet.TotalPlaytime = publicCabinet.Servers.Sum(s => s.Playtime);
+        publicCabinet.Message = string.IsNullOrWhiteSpace(apiKey)
             ? "Привилегии недоступны: задайте API-ключ Unicore в настройках интеграции или нужен вход игрока через лаунчер."
-            : "Привилегии недоступны: API-ключ Unicore не смог прочитать кабинет (проверьте права admin.dashboard + admin.users.read и IP allowlist).";
-        return fromPublic;
+            : $"Привилегии недоступны: API-ключ не прочитал кабинет ({apiKeyError ?? "unknown"}). UUID Unicore={unicoreUserUuid}. Проверьте IP allowlist (IP бэкенда Gml) и права admin.dashboard + admin.users.read.";
+        return publicCabinet;
     }
 
-    private async Task<UnicorePlayerCabinetDto?> TryLoadWithApiKeyAsync(
+    private static bool IsUnicoreKernelUser(string? name) =>
+        !string.IsNullOrWhiteSpace(name)
+        && name.Equals("Kernel", StringComparison.OrdinalIgnoreCase);
+
+    private async Task<(UnicorePlayerCabinetDto? Cabinet, string? Error)> TryLoadWithApiKeyAsync(
         string host,
         string apiKey,
-        string userUuid,
-        string username,
+        string unicoreUserUuid,
+        UnicorePlayerCabinetDto playtime,
         CancellationToken ct)
     {
         try
         {
+            // Не дергаем GET /users/{uuid}: для Kernel и части скрытых профилей Unicore отвечает 404,
+            // хотя groups/money с API-ключом при этом могут быть валидны.
             using var groupsRequest = new HttpRequestMessage(
                 HttpMethod.Get,
-                $"{host}/donates/groups/admin/{Uri.EscapeDataString(userUuid)}");
+                $"{host}/donates/groups/admin/{Uri.EscapeDataString(unicoreUserUuid)}");
             groupsRequest.Headers.TryAddWithoutValidation("Authorization", $"Api-Key {apiKey}");
 
             using var moneyRequest = new HttpRequestMessage(
                 HttpMethod.Get,
-                $"{host}/cabinet/money/admin/{Uri.EscapeDataString(userUuid)}");
+                $"{host}/cabinet/money/admin/{Uri.EscapeDataString(unicoreUserUuid)}");
             moneyRequest.Headers.TryAddWithoutValidation("Authorization", $"Api-Key {apiKey}");
 
             var groupsTask = _httpClient.SendAsync(groupsRequest, ct);
             var moneyTask = _httpClient.SendAsync(moneyRequest, ct);
-            var publicTask = TryLoadPublicPlaytimeAsync(host, username, ct);
-            await Task.WhenAll(groupsTask, moneyTask, publicTask);
+            await Task.WhenAll(groupsTask, moneyTask);
 
             var groupsResponse = await groupsTask;
             var moneyResponse = await moneyTask;
-            var playtime = await publicTask;
 
             if (!groupsResponse.IsSuccessStatusCode && !moneyResponse.IsSuccessStatusCode)
-                return null;
+            {
+                return (null,
+                    $"groups={(int)groupsResponse.StatusCode}, money={(int)moneyResponse.StatusCode}");
+            }
 
             var groupsJson = groupsResponse.IsSuccessStatusCode
                 ? ParseGroupsAdmin(await groupsResponse.Content.ReadAsStringAsync(ct))
                 : [];
-
-            if (playtime.Servers.Count == 0 && groupsJson.Count == 0 && !moneyResponse.IsSuccessStatusCode)
-                return null;
 
             var result = MergeApiKeyCabinet(playtime, groupsJson);
 
@@ -146,11 +168,11 @@ public class UnicorePlayerCabinetService(
             }
 
             result.Message = null;
-            return result;
+            return (result, null);
         }
-        catch
+        catch (Exception ex)
         {
-            return null;
+            return (null, ex.GetType().Name + ": " + ex.Message);
         }
     }
 
@@ -337,7 +359,7 @@ public class UnicorePlayerCabinetService(
         }
     }
 
-    private async Task<UnicorePlayerCabinetDto> TryLoadPublicPlaytimeAsync(
+    private async Task<(UnicorePlayerCabinetDto Cabinet, string? UnicoreUuid)> TryLoadPublicProfileAsync(
         string host,
         string username,
         CancellationToken ct)
@@ -348,24 +370,25 @@ public class UnicorePlayerCabinetService(
             using var response = await _httpClient.GetAsync(url, ct);
             if (!response.IsSuccessStatusCode)
             {
-                return new UnicorePlayerCabinetDto
+                return (new UnicorePlayerCabinetDto
                 {
                     Servers = [],
                     Message = "Не удалось получить публичный профиль Unicore"
-                };
+                }, null);
             }
 
             var json = JObject.Parse(await response.Content.ReadAsStringAsync(ct));
             var playtimes = json["playtimes"] as JArray ?? [];
-            return MergeServers(playtimes, []);
+            var uuid = json["uuid"]?.ToString();
+            return (MergeServers(playtimes, []), string.IsNullOrWhiteSpace(uuid) ? null : uuid);
         }
         catch
         {
-            return new UnicorePlayerCabinetDto
+            return (new UnicorePlayerCabinetDto
             {
                 Servers = [],
                 Message = "Ошибка запроса к UnicoreCMS"
-            };
+            }, null);
         }
     }
 

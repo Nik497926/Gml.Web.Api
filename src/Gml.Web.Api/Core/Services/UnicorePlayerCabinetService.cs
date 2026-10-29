@@ -155,16 +155,20 @@ public class UnicorePlayerCabinetService(
 
             var result = MergeApiKeyCabinet(playtime, groupsJson);
 
+            // /cabinet/money/admin/:uuid → Money[] (валюта на серверах), не объект с "real"
             if (moneyResponse.IsSuccessStatusCode)
+                TryApplyMoneyPayload(result, await moneyResponse.Content.ReadAsStringAsync(ct));
+
+            // Баланс "real" лежит на пользователе — отдельно, 404 (Kernel/скрытый) не валит кабинет
+            if (result.Balance is null)
             {
-                var moneyJson = JToken.Parse(await moneyResponse.Content.ReadAsStringAsync(ct));
-                var realToken = moneyJson["real"] ?? moneyJson["user"]?["real"] ?? moneyJson["money"]?["real"];
-                if (realToken is not null && realToken.Type != JTokenType.Null
-                    && decimal.TryParse(realToken.ToString(), System.Globalization.NumberStyles.Any,
-                        System.Globalization.CultureInfo.InvariantCulture, out var balance))
-                {
-                    result.Balance = balance;
-                }
+                using var userRequest = new HttpRequestMessage(
+                    HttpMethod.Get,
+                    $"{host}/users/{Uri.EscapeDataString(unicoreUserUuid)}");
+                userRequest.Headers.TryAddWithoutValidation("Authorization", $"Api-Key {apiKey}");
+                using var userResponse = await _httpClient.SendAsync(userRequest, ct);
+                if (userResponse.IsSuccessStatusCode)
+                    TryApplyUserRealBalance(result, await userResponse.Content.ReadAsStringAsync(ct));
             }
 
             result.Message = null;
@@ -173,6 +177,51 @@ public class UnicorePlayerCabinetService(
         catch (Exception ex)
         {
             return (null, ex.GetType().Name + ": " + ex.Message);
+        }
+    }
+
+    private static void TryApplyMoneyPayload(UnicorePlayerCabinetDto result, string body)
+    {
+        try
+        {
+            var token = JToken.Parse(body);
+            // Объект с real (на случай другого формата)
+            if (token is JObject)
+            {
+                TryApplyUserRealBalance(result, body);
+                return;
+            }
+
+            // Массив Money[] — игровые балансы по серверам, shop "real" здесь нет
+            _ = token as JArray;
+        }
+        catch
+        {
+            // не ломаем кабинет из‑за формата money
+        }
+    }
+
+    private static void TryApplyUserRealBalance(UnicorePlayerCabinetDto result, string body)
+    {
+        try
+        {
+            var token = JToken.Parse(body);
+            if (token is not JObject obj)
+                return;
+
+            var realToken = obj["real"] ?? obj["user"]?["real"] ?? obj["money"]?["real"];
+            if (realToken is null || realToken.Type == JTokenType.Null)
+                return;
+
+            if (decimal.TryParse(realToken.ToString(), System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out var balance))
+            {
+                result.Balance = balance;
+            }
+        }
+        catch
+        {
+            // ignore
         }
     }
 

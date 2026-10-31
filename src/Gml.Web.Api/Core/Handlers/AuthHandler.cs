@@ -18,12 +18,14 @@ namespace Gml.Web.Api.Core.Handlers;
 
 public class AuthHandler : IAuthHandler
 {
+    private const string RefreshCookieName = "refreshToken";
+
     public static async Task<IResult> Logout(
         HttpContext httpContext,
         IAccessTokenService tokenService,
         IRefreshTokenRepository refreshRepo)
     {
-        var refreshToken = httpContext.Request.Cookies["refreshToken"];
+        var refreshToken = httpContext.Request.Cookies[RefreshCookieName];
         if (!string.IsNullOrWhiteSpace(refreshToken))
         {
             var hash = tokenService.HashRefreshToken(refreshToken);
@@ -34,13 +36,7 @@ public class AuthHandler : IAuthHandler
             }
         }
 
-        httpContext.Response.Cookies.Delete("refreshToken", new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.None,
-            Path = "/"
-        });
+        ClearRefreshTokenCookies(httpContext.Response);
 
         return Results.Ok(ResponseMessage.Create("Вы вышли из системы", HttpStatusCode.OK));
     }
@@ -125,14 +121,7 @@ public class AuthHandler : IAuthHandler
         var expiresAt = DateTime.UtcNow.AddDays(settings.RefreshTokenDays);
         await refreshRepo.CreateAsync(user.Id, refreshHash, expiresAt);
 
-        var cookieOptions = new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.None,
-            Expires = expiresAt
-        };
-        httpContext.Response.Cookies.Append("refreshToken", refreshToken, cookieOptions);
+        WriteRefreshTokenCookie(httpContext.Response, refreshToken, expiresAt);
 
         var tokens = new AuthTokensDto
         {
@@ -193,14 +182,7 @@ public class AuthHandler : IAuthHandler
         var expiresAt = DateTime.UtcNow.AddDays(settings.RefreshTokenDays);
         await refreshRepo.CreateAsync(user.Id, refreshHash, expiresAt);
 
-        var cookieOptions = new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.None,
-            Expires = expiresAt
-        };
-        httpContext.Response.Cookies.Append("refreshToken", refreshToken, cookieOptions);
+        WriteRefreshTokenCookie(httpContext.Response, refreshToken, expiresAt);
 
         var tokens = new AuthTokensDto
         {
@@ -219,14 +201,26 @@ public class AuthHandler : IAuthHandler
         ServerSettings settings,
         DatabaseContext db)
     {
-        var refreshToken = httpContext.Request.Cookies["refreshToken"];
+        var refreshToken = httpContext.Request.Cookies[RefreshCookieName];
         if (string.IsNullOrWhiteSpace(refreshToken))
             return Results.Unauthorized();
 
         var hash = tokenService.HashRefreshToken(refreshToken);
         var stored = await refreshRepo.FindActiveByHashAsync(hash);
         if (stored is null)
+        {
+            // Битый/отозванный cookie — сбрасываем, чтобы не мешал новому логину
+            ClearRefreshTokenCookies(httpContext.Response);
             return Results.Unauthorized();
+        }
+
+        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == stored.UserId);
+        if (user is null)
+        {
+            await refreshRepo.RevokeAsync(stored.UserId, stored.TokenHash);
+            ClearRefreshTokenCookies(httpContext.Response);
+            return Results.Unauthorized();
+        }
 
         // Revoke old token (rotation)
         await refreshRepo.RevokeAsync(stored.UserId, stored.TokenHash);
@@ -240,20 +234,18 @@ public class AuthHandler : IAuthHandler
             .Select(rp => rp.Permission.Name)
             .Distinct()
             .ToListAsync();
-        var newAccess = tokenService.GenerateAccessToken(stored.UserId, null, null, rolesRefresh, permsRefresh);
+        var newAccess = tokenService.GenerateAccessToken(
+            stored.UserId,
+            user.Login,
+            user.Email,
+            rolesRefresh,
+            permsRefresh);
         var newRefresh = tokenService.GenerateRefreshToken();
         var newHash = tokenService.HashRefreshToken(newRefresh);
         var expiresAt = DateTime.UtcNow.AddDays(settings.RefreshTokenDays);
         await refreshRepo.CreateAsync(stored.UserId, newHash, expiresAt);
 
-        var cookieOptions = new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.None,
-            Expires = expiresAt
-        };
-        httpContext.Response.Cookies.Append("refreshToken", newRefresh, cookieOptions);
+        WriteRefreshTokenCookie(httpContext.Response, newRefresh, expiresAt);
 
         var tokens = new AuthTokensDto
         {
@@ -302,5 +294,58 @@ public class AuthHandler : IAuthHandler
         await db.SaveChangesAsync();
 
         return Results.Ok(ResponseMessage.Create("Пользователь удален", HttpStatusCode.OK));
+    }
+
+    /// <summary>
+    /// Единые атрибуты refresh-cookie. Path должен быть "/", иначе после logout
+    /// cookie остаётся на пути /signin и ломает следующий вход (дубликаты / 401).
+    /// </summary>
+    private static CookieOptions CreateRefreshCookieOptions(DateTimeOffset? expires = null)
+    {
+        var options = new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.None,
+            Path = "/",
+            IsEssential = true,
+        };
+
+        if (expires.HasValue)
+            options.Expires = expires;
+
+        return options;
+    }
+
+    private static void WriteRefreshTokenCookie(HttpResponse response, string refreshToken, DateTime expiresAt)
+    {
+        // Сначала сбрасываем возможные старые cookie с другими Path/SameSite
+        ClearRefreshTokenCookies(response);
+        response.Cookies.Append(RefreshCookieName, refreshToken, CreateRefreshCookieOptions(expiresAt));
+    }
+
+    private static void ClearRefreshTokenCookies(HttpResponse response)
+    {
+        // Основной вариант (как пишем сейчас)
+        response.Cookies.Delete(RefreshCookieName, CreateRefreshCookieOptions());
+
+        // Наследие: cookie могли быть записаны без Path="/" (путь эндпоинта signin/signup/refresh)
+        foreach (var path in new[]
+                 {
+                     "/api/v1/users",
+                     "/api/v1/users/signin",
+                     "/api/v1/users/signup",
+                     "/api/v1/users/refresh",
+                     "/api/v1/users/logout",
+                 })
+        {
+            response.Cookies.Delete(RefreshCookieName, new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.None,
+                Path = path,
+            });
+        }
     }
 }

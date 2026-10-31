@@ -50,7 +50,13 @@ public class FileHandler : IFileHandler
             return Results.BadRequest(ResponseMessage.Create(result.Errors, "Ошибка валидации",
                 HttpStatusCode.BadRequest));
 
-        fileDto = fileDto.DistinctBy(c => c.Directory).ToList();
+        foreach (var item in fileDto)
+            item.Directory = NormalizeWhitelistPath(item.Directory);
+
+        fileDto = fileDto
+            .Where(c => !string.IsNullOrWhiteSpace(c.Directory))
+            .DistinctBy(c => c.Directory, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         var profileNames = fileDto.GroupBy(c => c.ProfileName);
 
@@ -64,6 +70,12 @@ public class FileHandler : IFileHandler
 
             foreach (var fileInfo in profileFiles)
             {
+                var alreadyListed = profile.FileWhiteList.Any(existing =>
+                    PathsEqual(existing.Directory, fileInfo.Directory));
+
+                if (alreadyListed)
+                    continue;
+
                 await manager.Profiles.AddFileToWhiteList(profile, new LocalFileInfo(fileInfo.Directory));
             }
         }
@@ -84,7 +96,13 @@ public class FileHandler : IFileHandler
             return Results.BadRequest(ResponseMessage.Create(result.Errors, "Ошибка валидации",
                 HttpStatusCode.BadRequest));
 
-        fileDto = fileDto.DistinctBy(c => c.Directory).ToList();
+        foreach (var item in fileDto)
+            item.Directory = NormalizeWhitelistPath(item.Directory);
+
+        fileDto = fileDto
+            .Where(c => !string.IsNullOrWhiteSpace(c.Directory))
+            .DistinctBy(c => c.Directory, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         var profileNames = fileDto.GroupBy(c => c.ProfileName);
 
@@ -96,9 +114,17 @@ public class FileHandler : IFileHandler
                 return Results.NotFound(ResponseMessage.Create($"Профиль с именем \"{profileFiles.Key}\" не найден",
                     HttpStatusCode.NotFound));
 
-            foreach (var fileInfo in profileFiles.DistinctBy(c => c.Directory))
+            var targets = profileFiles
+                .Select(c => c.Directory)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var toRemove = profile.FileWhiteList
+                .Where(existing => targets.Contains(NormalizeWhitelistPath(existing.Directory)))
+                .ToList();
+
+            foreach (var fileInfo in toRemove)
             {
-                await manager.Profiles.RemoveFileFromWhiteList(profile, new LocalFileInfo(fileInfo.Directory));
+                await manager.Profiles.RemoveFileFromWhiteList(profile, fileInfo);
             }
         }
 
@@ -118,9 +144,13 @@ public class FileHandler : IFileHandler
             return Results.BadRequest(ResponseMessage.Create(result.Errors, "Ошибка валидации",
                 HttpStatusCode.BadRequest));
 
-        folderDto = folderDto.DistinctBy(x => x.Path).ToList();
+        foreach (var item in folderDto)
+            item.Path = NormalizeWhitelistPath(item.Path);
 
-        var mappedFolders = mapper.Map<List<LocalFolderInfo>>(folderDto);
+        folderDto = folderDto
+            .Where(x => !string.IsNullOrWhiteSpace(x.Path))
+            .DistinctBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         var profileNames = folderDto.GroupBy(c => c.ProfileName);
 
@@ -132,7 +162,16 @@ public class FileHandler : IFileHandler
                 return Results.NotFound(ResponseMessage.Create($"Профиль с именем \"{profileFolders.Key}\" не найден",
                     HttpStatusCode.NotFound));
 
-            await manager.Profiles.AddFolderToWhiteList(profile, mappedFolders);
+            var foldersForProfile = profileFolders
+                .Where(folder => !profile.FolderWhiteList.Any(existing =>
+                    PathsEqual(existing.Path, folder.Path)))
+                .Select(folder => new LocalFolderInfo(folder.Path))
+                .ToList();
+
+            if (foldersForProfile.Count == 0)
+                continue;
+
+            await manager.Profiles.AddFolderToWhiteList(profile, foldersForProfile);
         }
 
         return Results.Ok(ResponseMessage.Create($"\"{folderDto.Count}\" папок было успешно добавлено в White-Лист",
@@ -151,9 +190,13 @@ public class FileHandler : IFileHandler
             return Results.BadRequest(ResponseMessage.Create(result.Errors, "Ошибка валидации",
                 HttpStatusCode.BadRequest));
 
-        folderDto = folderDto.DistinctBy(x => x.Path).ToList();
+        foreach (var item in folderDto)
+            item.Path = NormalizeWhitelistPath(item.Path);
 
-        var mappedFolders = mapper.Map<List<LocalFolderInfo>>(folderDto);
+        folderDto = folderDto
+            .Where(x => !string.IsNullOrWhiteSpace(x.Path))
+            .DistinctBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         var profileNames = folderDto.GroupBy(c => c.ProfileName);
 
@@ -165,10 +208,37 @@ public class FileHandler : IFileHandler
                 return Results.NotFound(ResponseMessage.Create($"Профиль с именем \"{profileFolders.Key}\" не найден",
                     HttpStatusCode.NotFound));
 
-            await manager.Profiles.RemoveFolderFromWhiteList(profile, mappedFolders);
+            var targets = profileFolders
+                .Select(c => c.Path)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var toRemove = profile.FolderWhiteList
+                .Where(existing => targets.Contains(NormalizeWhitelistPath(existing.Path)))
+                .ToList();
+
+            if (toRemove.Count == 0)
+                continue;
+
+            await manager.Profiles.RemoveFolderFromWhiteList(profile, toRemove);
         }
 
         return Results.Ok(ResponseMessage.Create($"\"{folderDto.Count}\" папок было успешно удалено из White-Лист",
             HttpStatusCode.OK));
     }
+
+    /// <summary>
+    /// Единый вид пути белого списка: `/` как разделитель, без ведущих/хвостовых слэшей.
+    /// </summary>
+    internal static string NormalizeWhitelistPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return string.Empty;
+
+        return path.Trim()
+            .Replace('\\', '/')
+            .Trim('/');
+    }
+
+    private static bool PathsEqual(string? left, string? right) =>
+        string.Equals(NormalizeWhitelistPath(left), NormalizeWhitelistPath(right), StringComparison.OrdinalIgnoreCase);
 }

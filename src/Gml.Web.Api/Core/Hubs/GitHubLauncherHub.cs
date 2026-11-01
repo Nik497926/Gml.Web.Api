@@ -88,9 +88,14 @@ public class GitHubLauncherHub(IGitHubService gitHubService, IGmlManager gmlMana
             downloadLogsDisposable = gmlManager.LauncherInfo.Settings.SystemProcedures.DownloadLogs.Subscribe(Log);
             if (await gmlManager.LauncherInfo.Settings.SystemProcedures.InstallDotnet())
             {
-                // Подтягиваем брендовый шаблон перед сборкой (панель / сервер)
                 var launcherProjectPath = Path.Combine(
                     gmlManager.LauncherInfo.InstallationDirectory, "Launcher", version);
+
+                // InstallDotnet из Gml.Core ставит только SDK 8.0.302 — доставляем SDK 10 под global.json лаунчера
+                await gitHubService.EnsureLauncherDotnetSdk10(
+                    gmlManager.LauncherInfo.InstallationDirectory,
+                    Log);
+
                 await gitHubService.ApplyBrandTheme(
                     launcherProjectPath, gmlManager.LauncherInfo.InstallationDirectory);
                 Log("Brand theme applied (LauncherBrand → Themes), if present.");

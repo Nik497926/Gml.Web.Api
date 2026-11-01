@@ -250,6 +250,12 @@ public class GitHubService : IGitHubService
         return Path.Combine(directory, fileDirectory);
     }
 
+    /// <summary>
+    /// Канал SDK, который требует global.json лаунчера (10.0.0 + rollForward latestMajor).
+    /// Gml.Core.InstallDotnet ставит только 8.0.302 — этого недостаточно.
+    /// </summary>
+    private const string LauncherDotnetSdkChannel = "10.0";
+
     public async Task EditLauncherFiles(string projectPath, string host, string folder)
     {
         var keys = new Dictionary<string, string>
@@ -273,6 +279,173 @@ public class GitHubService : IGitHubService
         foreach (var key in keys) content = content.Replace(key.Key, key.Value);
 
         await File.WriteAllTextAsync(settingsFile, content);
+    }
+
+    public async Task EnsureLauncherDotnetSdk10(string installationDirectory, Action<string>? log = null)
+    {
+        var dotnetRoot = ResolveBuildDotnetRoot(installationDirectory);
+        Directory.CreateDirectory(dotnetRoot);
+
+        var dotnetExe = Path.Combine(
+            dotnetRoot,
+            OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
+
+        if (File.Exists(dotnetExe) && await HasSdkMajorAsync(dotnetExe, 10))
+        {
+            log?.Invoke($"NET SDK 10 already present in {dotnetRoot}");
+            return;
+        }
+
+        log?.Invoke($"Installing .NET SDK {LauncherDotnetSdkChannel} into {dotnetRoot}...");
+
+        if (OperatingSystem.IsWindows())
+        {
+            await InstallSdkWindowsAsync(dotnetRoot, log);
+        }
+        else
+        {
+            await InstallSdkUnixAsync(dotnetRoot, log);
+        }
+
+        if (!File.Exists(dotnetExe) || !await HasSdkMajorAsync(dotnetExe, 10))
+            throw new InvalidOperationException(
+                $"Не удалось установить .NET SDK {LauncherDotnetSdkChannel} в {dotnetRoot}");
+
+        log?.Invoke($"NET SDK {LauncherDotnetSdkChannel} installed.");
+    }
+
+    private string ResolveBuildDotnetRoot(string installationDirectory)
+    {
+        // После InstallDotnet Gml.Core выставляет BuildDotnetPath (часто путь к бинарнику dotnet).
+        var buildPath = _gmlManager.LauncherInfo.Settings.SystemProcedures.BuildDotnetPath;
+        if (!string.IsNullOrWhiteSpace(buildPath))
+        {
+            if (buildPath.EndsWith("dotnet", StringComparison.OrdinalIgnoreCase)
+                || buildPath.EndsWith("dotnet.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                var dir = Path.GetDirectoryName(buildPath);
+                if (!string.IsNullOrEmpty(dir))
+                    return dir;
+            }
+
+            return buildPath;
+        }
+
+        return Path.Combine(installationDirectory, "dotnet");
+    }
+
+    private static async Task<bool> HasSdkMajorAsync(string dotnetExe, int major)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = dotnetExe,
+                Arguments = "--list-sdks",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var process = Process.Start(psi);
+            if (process is null)
+                return false;
+
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            return output
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .Any(line => line.TrimStart().StartsWith($"{major}.", StringComparison.Ordinal));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task InstallSdkUnixAsync(string installDir, Action<string>? log)
+    {
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"dotnet-install-{Guid.NewGuid():N}.sh");
+        try
+        {
+            await using (var stream = await _httpClient.GetStreamAsync("https://dot.net/v1/dotnet-install.sh"))
+            await using (var file = File.Create(scriptPath))
+                await stream.CopyToAsync(file);
+
+            var chmod = Process.Start(new ProcessStartInfo
+            {
+                FileName = "chmod",
+                Arguments = $"+x \"{scriptPath}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            });
+            if (chmod is not null)
+                await chmod.WaitForExitAsync();
+
+            await RunProcessAsync(
+                "/bin/bash",
+                $"\"{scriptPath}\" --channel {LauncherDotnetSdkChannel} --install-dir \"{installDir}\"",
+                log);
+        }
+        finally
+        {
+            try { File.Delete(scriptPath); } catch { /* ignore */ }
+        }
+    }
+
+    private async Task InstallSdkWindowsAsync(string installDir, Action<string>? log)
+    {
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"dotnet-install-{Guid.NewGuid():N}.ps1");
+        try
+        {
+            await using (var stream = await _httpClient.GetStreamAsync("https://dot.net/v1/dotnet-install.ps1"))
+            await using (var file = File.Create(scriptPath))
+                await stream.CopyToAsync(file);
+
+            await RunProcessAsync(
+                "powershell",
+                $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\" -Channel {LauncherDotnetSdkChannel} -InstallDir \"{installDir}\"",
+                log);
+        }
+        finally
+        {
+            try { File.Delete(scriptPath); } catch { /* ignore */ }
+        }
+    }
+
+    private static async Task RunProcessAsync(string fileName, string arguments, Action<string>? log)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = arguments,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException($"Не удалось запустить {fileName}");
+
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (!string.IsNullOrWhiteSpace(e.Data))
+                log?.Invoke(e.Data);
+        };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (!string.IsNullOrWhiteSpace(e.Data))
+                log?.Invoke(e.Data);
+        };
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        await process.WaitForExitAsync();
+
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"Установка .NET SDK завершилась с кодом {process.ExitCode}");
     }
 
     public Task ApplyBrandTheme(string projectPath, string installationDirectory)

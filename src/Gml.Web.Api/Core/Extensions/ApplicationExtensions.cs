@@ -1,5 +1,6 @@
 using System.Net;
 using System.Reactive.Subjects;
+using System.Security.Claims;
 using System.Text;
 using Gml.Domains.Settings;
 using Gml.Web.Api.Core.Authentication;
@@ -248,7 +249,10 @@ public static class ApplicationExtensions
             .AddJwtBearer(jwt =>
             {
                 jwt.SaveToken = true;
+                jwt.MapInboundClaims = false;
                 jwt.TokenValidationParameters = tokenValidationParameters;
+                jwt.TokenValidationParameters.NameClaimType = ClaimTypes.Name;
+                jwt.TokenValidationParameters.RoleClaimType = ClaimTypes.Role;
                 jwt.Events = new JwtBearerEvents
                 {
                     OnMessageReceived = context =>

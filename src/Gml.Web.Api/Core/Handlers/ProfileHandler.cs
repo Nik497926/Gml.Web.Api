@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Security.Claims;
 using System.Web;
 using AutoMapper;
 using FluentValidation;
@@ -34,15 +35,7 @@ public class ProfileHandler : IProfileHandler
 
         if (context.User.IsInRole("Player"))
         {
-            var userName = context.User.Identity?.Name;
-
-            if (string.IsNullOrEmpty(userName))
-            {
-                return Results.BadRequest(ResponseMessage.Create("Не удалось идентифицировать пользователя",
-                    HttpStatusCode.BadRequest));
-            }
-
-            var user = await gmlManager.Users.GetUserByName(userName);
+            var user = await ResolvePlayerUserAsync(context, gmlManager);
 
             if (user is null)
             {
@@ -50,10 +43,12 @@ public class ProfileHandler : IProfileHandler
                     HttpStatusCode.BadRequest));
             }
 
+            // Включенные профили без whitelist — всем; с whitelist — только перечисленным (UUID без учёта регистра).
             profiles = (await gmlManager.Profiles.GetProfiles())
-                .Where(c =>
-                    c is { IsEnabled: true, UserWhiteListGuid.Count: 0 } ||
-                    c.UserWhiteListGuid.Any(g => g.Equals(user.Uuid)));
+                .Where(c => c.IsEnabled && (
+                    c.UserWhiteListGuid.Count == 0 ||
+                    c.UserWhiteListGuid.Any(g =>
+                        g.Equals(user.Uuid, StringComparison.OrdinalIgnoreCase))));
         }
         else
         {
@@ -62,7 +57,7 @@ public class ProfileHandler : IProfileHandler
 
         var gameProfiles = profiles as IGameProfile[] ?? profiles.ToArray();
 
-        var dtoProfiles = mapper.Map<ProfileReadDto[]>(profiles);
+        var dtoProfiles = mapper.Map<ProfileReadDto[]>(gameProfiles);
 
         foreach (var profile in dtoProfiles)
         {
@@ -74,6 +69,33 @@ public class ProfileHandler : IProfileHandler
 
         return Results.Ok(ResponseMessage.Create(dtoProfiles.OrderByDescending(c => c.Priority), string.Empty,
             HttpStatusCode.OK));
+    }
+
+    /// <summary>
+    /// Игрок из JWT: сначала по UUID (sub / NameIdentifier), затем по имени.
+    /// Identity.Name иногда пустой из‑за маппинга claim'ов — без UUID лаунчер получал 400 и пустой список.
+    /// </summary>
+    private static async Task<GmlCore.Interfaces.User.IUser?> ResolvePlayerUserAsync(
+        HttpContext context,
+        IGmlManager gmlManager)
+    {
+        var uuid = context.User.FindFirstValue(ClaimTypes.NameIdentifier)
+                   ?? context.User.FindFirstValue("sub");
+
+        if (!string.IsNullOrWhiteSpace(uuid))
+        {
+            var byUuid = await gmlManager.Users.GetUserByUuid(uuid);
+            if (byUuid is not null)
+                return byUuid;
+        }
+
+        var userName = context.User.Identity?.Name
+                       ?? context.User.FindFirstValue(ClaimTypes.Name);
+
+        if (string.IsNullOrWhiteSpace(userName))
+            return null;
+
+        return await gmlManager.Users.GetUserByName(userName);
     }
 
     public static async Task<IResult> GetMinecraftVersions(IGmlManager gmlManager, string gameLoader,

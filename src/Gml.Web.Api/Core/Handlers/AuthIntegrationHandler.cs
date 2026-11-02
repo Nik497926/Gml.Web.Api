@@ -84,31 +84,17 @@ public class AuthIntegrationHandler : IAuthIntegrationHandler
         UnicoreAuthOptionsService unicoreAuthOptions,
         IGmlManager gmlManager)
     {
-        var hasExternal = authResult is ExtendedAuthResult { AccessToken: { Length: > 0 } };
-        var useExternalTokens = unicoreAuthOptions.UseExternalTokens;
+        // Unicore/внешний access+refresh — только в store для кабинета/API-ключа.
+        // В player.AccessToken ВСЕГДА кладём Gml JWT: лаунчер ходит в /ws и /api с ним,
+        // а внешний JWT (без iss/aud Gml) даёт 401 на SignalR и GetProfiles.
+        _ = unicoreAuthOptions;
 
-        if (hasExternal && useExternalTokens)
+        if (authResult is ExtendedAuthResult { AccessToken: { Length: > 0 } } extended
+            && !string.IsNullOrWhiteSpace(player.Uuid))
         {
-            var extended = (ExtendedAuthResult)authResult;
-            player.AccessToken = extended.AccessToken!;
-            var expiry = UnicoreCMSAuthService.TryGetJwtExpiry(extended.AccessToken!);
-            if (expiry.HasValue)
-                player.ExpiredDate = expiry.Value;
-
-            if (!string.IsNullOrWhiteSpace(player.Uuid))
-                tokenStore.SetTokens(player.Uuid, extended.AccessToken, extended.RefreshToken);
-
-            await gmlManager.Users.UpdateUser(player);
-            return;
-        }
-
-        // Gml JWT на игроке. Unicore access/refresh всё равно сохраняем для кабинета/playtime.
-        if (hasExternal && !string.IsNullOrWhiteSpace(player.Uuid))
-        {
-            var extended = (ExtendedAuthResult)authResult;
             tokenStore.SetTokens(player.Uuid, extended.AccessToken, extended.RefreshToken);
         }
-        else if (!string.IsNullOrWhiteSpace(player.Uuid) && !hasExternal)
+        else if (!string.IsNullOrWhiteSpace(player.Uuid))
         {
             tokenStore.SetTokens(player.Uuid, null, null);
         }
@@ -255,23 +241,14 @@ public class AuthIntegrationHandler : IAuthIntegrationHandler
                     {
                         tokenStore.SetTokens(user.Uuid, newAccess, refreshed.RefreshToken);
 
-                        if (unicoreAuthOptions.UseExternalTokens)
-                        {
-                            user.AccessToken = newAccess;
-                            var expiry = UnicoreCMSAuthService.TryGetJwtExpiry(newAccess);
-                            if (expiry.HasValue)
-                                user.ExpiredDate = expiry.Value;
-                        }
-                        else
-                        {
-                            // Игрок продолжает с Gml JWT; Unicore токены только в store.
-                            user.AccessToken = accessTokenService.GenerateAccessToken(
-                                user.Uuid,
-                                user.Name,
-                                user.Name,
-                                ["Player"], ["profiles.view", "integrations.news.view"], 60 * 24 * 10);
-                            user.ExpiredDate = DateTime.UtcNow.AddDays(10);
-                        }
+                        // Лаунчеру нужен Gml JWT; Unicore access остаётся в store (кабинет).
+                        _ = unicoreAuthOptions;
+                        user.AccessToken = accessTokenService.GenerateAccessToken(
+                            user.Uuid,
+                            user.Name,
+                            user.Name,
+                            ["Player"], ["profiles.view", "integrations.news.view"], 60 * 24 * 10);
+                        user.ExpiredDate = DateTime.UtcNow.AddDays(10);
 
                         await gmlManager.Users.UpdateUser(user);
 
